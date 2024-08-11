@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>修复版层级结构笔记应用</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            height: 100%;
+        }
+        .container {
+            display: flex;
+            height: 100%;
+        }
+        .sidebar {
+            width: 250px;
+            background-color: #f0f0f0;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .main-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar {
+            padding: 10px;
+            background-color: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .note-content {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .folder-item, .file-item {
+            margin-bottom: 5px;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .folder-item:hover, .file-item:hover {
+            background-color: #e0e0e0;
+        }
+        .folder-content {
+            margin-left: 20px;
+            display: none;
+        }
+        .folder-item::before {
+            content: '▶';
+            margin-right: 5px;
+        }
+        .folder-item.open::before {
+            content: '▼';
+        }
+        .selected {
+            background-color: #d0d0d0;
+        }
+        #noteTitle, #noteBody {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        #noteBody {
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar" id="sidebar">
+            <!-- 左侧栏现在是空的 -->
+        </div>
+        <div class="main-content">
+            <div class="toolbar">
+                <button id="newFolder">新建文件夹</button>
+                <button id="newNote">新建笔记</button>
+                <button id="deleteItem">删除</button>
+                <button id="saveNote">保存</button>
+                <button id="clearAll">清除所有</button>
+            </div>
+            <div class="note-content" id="noteContent">
+                <input type="text" id="noteTitle" placeholder="笔记标题">
+                <textarea id="noteBody" placeholder="在这里输入笔记内容..."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const noteContent = document.getElementById('noteContent');
+        const noteTitle = document.getElementById('noteTitle');
+        const noteBody = document.getElementById('noteBody');
+        const newFolderButton = document.getElementById('newFolder');
+        const newNoteButton = document.getElementById('newNote');
+        const deleteItemButton = document.getElementById('deleteItem');
+        const saveNoteButton = document.getElementById('saveNote');
+        const clearAllButton = document.getElementById('clearAll');
+        let selectedItem = null;
+    
+        function updateNoteView(item) {
+            console.log('Updating note view:', item);
+            if (item && item.dataset.isFolder !== 'true') {
+                console.log('Note title:', item.textContent);
+                // 使用 getAttribute 来获取内容
+                const content = item.getAttribute('data-content');
+                console.log('Note content:', content);
+                noteTitle.value = item.textContent;
+                noteBody.value = content || '';
+                noteTitle.style.display = 'block';
+                noteBody.style.display = 'block';
+                deleteItemButton.disabled = false;
+                saveNoteButton.disabled = false;
+            } else {
+                noteTitle.value = '';
+                noteBody.value = '';
+                noteTitle.style.display = 'none';
+                noteBody.style.display = 'none';
+                deleteItemButton.disabled = item && item.dataset.isFolder === 'true' ? false : true;
+                saveNoteButton.disabled = true;
+            }
+        }
+    
+        function addClickListener(item) {
+            item.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                console.log('Clicked item:', item);
+                console.log('Item dataset:', item.dataset);
+                if (selectedItem) {
+                    selectedItem.classList.remove('selected');
+                }
+                item.classList.add('selected');
+                selectedItem = item;
+                updateNoteView(item);
+
+                if (item.dataset.isFolder === 'true') {
+                    item.classList.toggle('open');
+                    const folderContent = item.nextElementSibling;
+                    if (folderContent && folderContent.classList.contains('folder-content')) {
+                        folderContent.style.display = item.classList.contains('open') ? 'block' : 'none';
+                        
+                        // Load folder contents if not already loaded
+                        if (item.classList.contains('open') && folderContent.children.length === 0) {
+                            const response = await fetch(`http://localhost:3000/api/notes/${item.dataset.id}/children`);
+                            const childNotes = await response.json();
+                            childNotes.forEach(childNote => createFolderStructure(childNote, folderContent, new Map(childNotes.map(n => [n.id, n]))));
+                        }
+                    }
+                }
+            });
+        }
+    
+        function createFolderStructure(note, parentElement, noteMap) {
+            console.log('Creating structure for:', note);
+            const item = document.createElement('div');
+            item.className = note.is_folder ? 'folder-item' : 'file-item';
+            item.dataset.id = note.id;
+            item.dataset.isFolder = note.is_folder;
+            item.textContent = note.title;
+            if (!note.is_folder) {
+                item.setAttribute('data-content', note.content || '');
+                console.log('Setting note content:', note.content);
+            }
+            
+            parentElement.appendChild(item);
+            
+            if (note.is_folder) {
+                const folderContent = document.createElement('div');
+                folderContent.className = 'folder-content';
+                parentElement.appendChild(folderContent);
+                
+                // Load child notes
+                const childNotes = Array.from(noteMap.values()).filter(childNote => childNote.parent_id === note.id);
+                childNotes.forEach(childNote => createFolderStructure(childNote, folderContent, noteMap));
+            }
+            
+            addClickListener(item);
+            return item;
+        }
+    
+
+        async function loadNotes() {
+            const response = await fetch('http://localhost:3000/api/notes');
+            const notes = await response.json();
+            console.log('Loaded notes:', notes);
+            
+            const noteMap = new Map();
+            notes.forEach(note => {
+                noteMap.set(note.id, note);
+                console.log(`Note ${note.id}: ${note.title}, Parent: ${note.parent_id}, Is Folder: ${note.is_folder}`);
+            });
+            
+            sidebar.innerHTML = ''; // Clear existing content
+            
+            notes.forEach(note => {
+                if (!note.parent_id) {
+                    console.log(`Creating top-level structure for note ${note.id}`);
+                    createFolderStructure(note, sidebar, noteMap);
+                }
+            });
+        }
+
+    
+        // 修改新建笔记和新建文件夹的函数
+        newFolderButton.addEventListener('click', async () => {
+            const folderName = prompt('请输入新文件夹名称：');
+            if (folderName) {
+                const parentId = selectedItem && selectedItem.dataset.isFolder === 'true' 
+                    ? selectedItem.dataset.id 
+                    : null;
+                
+                const response = await fetch('http://localhost:3000/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: folderName,
+                        content: '',
+                        parent_id: parentId,
+                        is_folder: true
+                    })
+                });
+                const result = await response.json();
+                
+                let parentElement = sidebar;
+                if (parentId) {
+                    parentElement = selectedItem.nextElementSibling;
+                    selectedItem.classList.add('open');
+                    parentElement.style.display = 'block';
+                }
+                
+                createFolderStructure({
+                    id: result.id,
+                    title: folderName,
+                    is_folder: true,
+                    parent_id: parentId
+                }, parentElement, new Map());
+            }
+        });
+
+        newNoteButton.addEventListener('click', async () => {
+            const noteName = '新笔记 ' + new Date().toLocaleString();
+            const parentId = selectedItem && selectedItem.dataset.isFolder === 'true' 
+                ? selectedItem.dataset.id 
+                : null;
+            
+            const response = await fetch('http://localhost:3000/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: noteName,
+                    content: '',
+                    parent_id: parentId,
+                    is_folder: false
+                })
+            });
+            const result = await response.json();
+            
+            let parentElement = sidebar;
+            if (parentId) {
+                parentElement = selectedItem.nextElementSibling;
+                selectedItem.classList.add('open');
+                parentElement.style.display = 'block';
+            }
+            
+            const newNote = createFolderStructure({
+                id: result.id,
+                title: noteName,
+                content: '',
+                is_folder: false,
+                parent_id: parentId
+            }, parentElement, new Map());
+            
+            newNote.click();
+        });
+    
+        deleteItemButton.addEventListener('click', async () => {
+            if (selectedItem) {
+                if (selectedItem.dataset.isFolder === 'true') {
+                    if (!confirm('删除文件夹将会删除其中的所有笔记，确定要删除吗？')) {
+                        return;
+                    }
+                }
+                
+                await fetch(`http://localhost:3000/api/notes/${selectedItem.dataset.id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (selectedItem.dataset.isFolder === 'true') {
+                    const folderContent = selectedItem.nextElementSibling;
+                    if (folderContent) folderContent.remove();
+                }
+                selectedItem.remove();
+                selectedItem = null;
+                updateNoteView(null);
+            }
+        });
+    
+        // 修改保存笔记的函数
+        saveNoteButton.addEventListener('click', async () => {
+            if (selectedItem && selectedItem.dataset.isFolder !== 'true') {
+                const response = await fetch(`http://localhost:3000/api/notes/${selectedItem.dataset.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: noteTitle.value,
+                        content: noteBody.value
+                    })
+                });
+                
+                if (response.ok) {
+                    selectedItem.textContent = noteTitle.value;
+                    // 使用 setAttribute 来更新内容
+                    selectedItem.setAttribute('data-content', noteBody.value);
+                    alert('笔记已保存！');
+                } else {
+                    alert('保存失败，请重试。');
+                }
+            }
+        });
+    
+        clearAllButton.addEventListener('click', async () => {
+            if (confirm('确定要删除所有内容吗？此操作不可撤销。')) {
+                const response = await fetch('http://localhost:3000/api/notes');
+                const notes = await response.json();
+                
+                for (const note of notes) {
+                    await fetch(`http://localhost:3000/api/notes/${note.id}`, {
+                        method: 'DELETE'
+                    });
+                }
+                
+                sidebar.innerHTML = '';
+                selectedItem = null;
+                updateNoteView(null);
+            }
+        });
+    
+        loadNotes();
+    </script>
+</body>
+</html>
